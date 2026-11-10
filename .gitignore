@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-server/
+.env
+.env.*
+!.env.example
+coverage/
+uploads/
+!.gitkeep
+.panditji-private-custom-requests/
+private-uploads/
+qa-screenshots/
+*.log
+*.pem
+*.key
