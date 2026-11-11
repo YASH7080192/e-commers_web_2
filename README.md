@@ -29,13 +29,13 @@ Requirements: Node.js 20.19+ (or 22.12+) and npm, plus a MongoDB database (local
 5. Start frontend and API with `npm run dev`.
 6. Open `http://localhost:5173`; the API health endpoint is `http://localhost:4000/api/health`.
 
-The optional `npm run seed:catalog` command inserts starter catalogue data into the configured database. Run it only if you want that sample data and have checked which database `.env` points to. Do not run seed commands against a production database without a backup and an explicit plan.
+The server does not add sample categories or products on startup. `npm run seed:catalog` is an explicit command that inserts starter catalogue data into the configured database; do not run it unless you intentionally want sample records and have checked which database `.env` points to. Never run it against the shop database for this project audit.
 
 ## Environment and file storage
 
 - `.env.example` documents configuration names; fill actual credentials only in the ignored `.env` file or deployment environment.
 - Product uploads under `uploads/` are ignored. Back them up and deploy them separately if the shop uses local image storage.
-- Customer reference photos and design previews are stored privately outside the repository by default, in the sibling `.panditji-private-custom-requests` directory. `CUSTOM_REQUEST_UPLOAD_DIR` can point to a protected persistent directory. Do not publish or commit these files.
+- Customer reference photos and design previews are stored privately outside the repository by default, in the sibling `.panditji-private-custom-requests` directory. `CUSTOM_REQUEST_UPLOAD_DIR` can point to a protected persistent directory. Do not publish or commit these files. Server startup does not automatically delete uploads.
 - Cloudinary, Razorpay, SMTP, and WhatsApp integrations are optional. A notification is not reported as sent unless its integration is configured and succeeds.
 
 ## Build and tests

@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { authHeaders, request } from './api';
 import ProductImage from './ProductImage';
@@ -16,7 +16,7 @@ type ImageEntry = { id: string; src: string; file?: File };
 type PageData = { products: Product[]; pagination: { page: number; pages: number; total: number } };
 const emptyProduct = (): Product => ({
   _id: '', name: '', slug: '', description: '', category: '', images: [],
-  variants: [{ size: 'A4', paperQuality: 'Matte 250 GSM', finish: 'Unframed', frame: '', price: 0, originalPrice: undefined, stock: 0, sku: '', active: true }],
+  variants: [{ size: 'A4', paperQuality: 'Matte 250 GSM', finish: 'Unframed', frame: '', price: 299, originalPrice: undefined, stock: 10, sku: '', active: true }],
   featured: false, active: false, inventoryVerified: false,
 });
 const money = (value: number) => `₹${Number(value || 0).toLocaleString('en-IN')}`;
@@ -26,6 +26,7 @@ export default function AdminProducts() {
   const [items, setItems] = useState<Product[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<Category[]>([]);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [imageEntries, setImageEntries] = useState<ImageEntry[]>([]);
@@ -56,10 +57,10 @@ export default function AdminProducts() {
   useEffect(() => { request<{ categories: Category[] }>('/categories').then(result => setCategoryOptions(result.categories)).catch(() => setCategoryOptions([])); }, []);
 
   const startEdit = (product: Product) => {
-    setError(''); setEditing({ ...product, variants: (product.variants || []).map(variant => ({ active: true, ...variant })) });
+    setError(''); setSuccess(''); setEditing({ ...product, variants: (product.variants || []).map(variant => ({ active: true, ...variant })) });
     setImageEntries(freshImages(product.images));
   };
-  const startAdd = () => { setError(''); setEditing(emptyProduct()); setImageEntries([]); };
+  const startAdd = () => { setError(''); setSuccess(''); setEditing(emptyProduct()); setImageEntries([]); };
   const closeEdit = () => {
     imageEntries.forEach(image => { if (image.file) URL.revokeObjectURL(image.src); });
     setEditing(null); setImageEntries([]); setError('');
@@ -68,7 +69,7 @@ export default function AdminProducts() {
   const addFiles = (files: FileList | null, replaceId?: string) => {
     if (!files?.length) return;
     const picked = Array.from(files);
-    const invalidType = picked.find(file => !['image/jpeg', 'image/png', 'image/webp'].includes(file.type));
+    const invalidType = picked.find(file => !['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type.toLowerCase()) && !/\.(jpe?g|png|webp)$/i.test(file.name));
     const tooLarge = picked.find(file => file.size > 8 * 1024 * 1024);
     if (invalidType) { setError(`${invalidType.name}: choose a JPG, JPEG, PNG or WebP image.`); return; }
     if (tooLarge) { setError(`${tooLarge.name}: image files must be 8 MB or smaller.`); return; }
@@ -117,6 +118,21 @@ export default function AdminProducts() {
     event.preventDefault(); if (!editing) return; setError('');
     if (!editing.name.trim() || !editing.description.trim() || !editing.category) { setError('Name, description and category are required.'); return; }
     if (!editing.variants.length) { setError('Add at least one product variant.'); return; }
+    for (let i = 0; i < editing.variants.length; i++) {
+      const v = editing.variants[i];
+      if (!v.size?.trim()) { setError(`Variant #${i + 1}: size is required.`); return; }
+      if (!v.price || v.price <= 0) { setError(`Variant #${i + 1}: valid selling price greater than ₹0 is required.`); return; }
+      if (v.originalPrice !== undefined && v.originalPrice !== null && v.originalPrice < v.price) {
+        setError(`Variant #${i + 1}: original price (MRP ₹${v.originalPrice}) cannot be lower than selling price (₹${v.price}).`); return;
+      }
+      if (v.stock === undefined || v.stock === null || v.stock < 0 || !Number.isInteger(v.stock)) {
+        setError(`Variant #${i + 1}: stock must be a non-negative whole number.`); return;
+      }
+    }
+    const enteredSkus = [editing.sku, ...editing.variants.map(v => v.sku)].filter(Boolean).map(s => String(s).trim().toLowerCase());
+    if (new Set(enteredSkus).size !== enteredSkus.length) {
+      setError('Product SKU and variant SKUs must be unique.'); return;
+    }
     if (editing.inventoryVerified && (!imageEntries.length || !imageEntries.some(image => image.src))) { setError('Add genuine product photos before verifying inventory for publication.'); return; }
     if (editing.inventoryVerified && !editing.variants.some(variant => variant.active !== false && variant.stock > 0)) { setError('At least one active variant needs verified price and available stock before publication.'); return; }
     setSaving(true);
@@ -124,7 +140,8 @@ export default function AdminProducts() {
       const images = await uploadSelectedFiles(imageEntries);
       const body = { ...editing, images, variants: editing.variants };
       await request(editing._id ? `/admin/products/${editing._id}` : '/admin/products', { method: editing._id ? 'PUT' : 'POST', body: JSON.stringify(body) });
-      closeEdit(); await load();
+      const published = Boolean(editing.active && editing.inventoryVerified);
+      closeEdit(); setSuccess(published ? 'Product saved and published to the customer storefront.' : 'Product saved as a draft. Verify its real photo, price and available stock before publishing.'); await load();
     } catch (err) { setError(err instanceof Error ? err.message : 'Product could not be saved.'); }
     finally { setSaving(false); }
   };
@@ -142,6 +159,7 @@ export default function AdminProducts() {
     <div className="sectionHead"><div><div className="eyebrow">CATALOGUE</div><h1>Products & prices</h1><p>{total} product records · unverified items stay out of the customer storefront.</p></div><Link to="/admin" className="textLink">Dashboard</Link></div>
     <div className="adminActions"><Link className="btn btn-outline" to="/admin/categories">Categories</Link><Link className="btn btn-outline" to="/admin/reviews">Reviews</Link><Link className="btn btn-outline" to="/admin/settings">Settings</Link><Link className="btn btn-dark" to="/admin/pos">+ Offline sale</Link><button className="btn btn-dark" onClick={startAdd}>+ Add product</button></div>
     <div className="notice">Product photos upload to secure local storage by default; configured Cloudinary credentials are reused when present. Use actual shop photos, prices and stock. Images can be reordered below; the first image is primary.</div>
+    {success && <div role="status" className="notice">{success}</div>}
     {error && !editing && <div role="alert" className="notice">{error}</div>}
     <div className="orderFilters productFilters"><label>Search products<input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Name, category or SKU"/></label><label>Category<select value={category} onChange={event => { setCategory(event.target.value); setPage(1); }}><option value="">All categories</option>{categoryOptions.map(option => <option key={option._id} value={option.name}>{option.name}</option>)}</select></label><label>Status<select value={activeFilter} onChange={event => { setActiveFilter(event.target.value); setPage(1); }}><option value="">All statuses</option><option value="true">Active</option><option value="false">Inactive / archived</option></select></label><label>Storefront<select value={visibilityFilter} onChange={event => { setVisibilityFilter(event.target.value); setPage(1); }}><option value="">Published and drafts</option><option value="true">Published</option><option value="false">Draft / hidden</option></select></label></div>
     <div className="adminTable">{items.length ? items.map(product => <article className="adminProduct" key={product._id}>

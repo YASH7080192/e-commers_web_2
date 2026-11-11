@@ -7,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import { api } from './routes.js';
 import { connectDatabase } from './db.js';
-import { Product, User } from './models.js';
+import { Product, User, Category } from './models.js';
 
 const isolatedDb = /^mongodb:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\/pjpw_product_qa_[a-zA-Z0-9_]+(?:\?.*)?$/.test(process.env.MONGODB_URI || '');
 test('admin product management and local multi-image flow in an isolated QA database', { skip: process.env.RUN_PRODUCT_INTEGRATION !== 'true' || !isolatedDb }, async () => {
@@ -24,9 +24,10 @@ test('admin product management and local multi-image flow in an isolated QA data
   const server = await new Promise<ReturnType<typeof app.listen>>(resolve => { const value = app.listen(0, '127.0.0.1', () => resolve(value)); });
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}/api`;
-  let adminId = ''; let productId = ''; let imagePaths: string[] = [];
+  let adminId = ''; let productId = ''; let imagePaths: string[] = []; let categoryId = '';
   try {
     const admin = await User.create({ name: 'Isolated QA Admin', email: adminEmail, passwordHash: 'not-used-in-this-test', role: 'admin' }); adminId = String(admin._id);
+    const category = await Category.create({ name: 'QA TEST ONLY', slug: `qa-test-only-${suffix}`, active: true }); categoryId = String(category._id);
     const token = jwt.sign({ id: adminId, role: 'admin', email: adminEmail }, process.env.JWT_SECRET);
     const headers = { Authorization: `Bearer ${token}` };
     const unauthorized = await fetch(`${base}/admin/products`); assert.equal(unauthorized.status, 401);
@@ -78,6 +79,7 @@ test('admin product management and local multi-image flow in an isolated QA data
     await new Promise<void>(resolve => server.close(() => resolve()));
     if (productId) await Product.deleteOne({ _id: productId });
     if (adminId) await User.deleteOne({ _id: adminId });
+    if (categoryId) await Category.deleteOne({ _id: categoryId });
     await Promise.all(imagePaths.map(image => unlink(path.resolve(process.cwd(), 'uploads', 'products', path.basename(image))).catch(() => {})));
     await mongoose.disconnect();
   }
