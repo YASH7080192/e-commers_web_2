@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Link, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowDownRight, ArrowRight, ArrowUpRight, Check, Heart, MapPin, Menu, Minus, Package, Plus, Search, ShoppingBag, Sparkles, Truck, UserRound, X } from 'lucide-react';
+import { ArrowRight, Check, Heart, MapPin, Menu, Minus, Package, Plus, Search, ShoppingBag, Truck, UserRound, X } from 'lucide-react';
 import { request } from './api';
 import { AdminLogin, AuthPage, SimplePage } from './AuthPages';
 
