@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { authHeaders, request } from './api';
 import ProductImage from './ProductImage';
 import VariantEditor, { type AdminVariant } from './VariantEditor';
@@ -23,6 +23,7 @@ const money = (value: number) => `₹${Number(value || 0).toLocaleString('en-IN'
 const freshImages = (images: string[] = []): ImageEntry[] => images.map((src, index) => ({ id: `${Date.now()}-${index}-${Math.random()}`, src }));
 
 export default function AdminProducts() {
+  const location = useLocation();
   const [items, setItems] = useState<Product[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<Category[]>([]);
   const [error, setError] = useState('');
@@ -61,6 +62,7 @@ export default function AdminProducts() {
     setImageEntries(freshImages(product.images));
   };
   const startAdd = () => { setError(''); setSuccess(''); setEditing(emptyProduct()); setImageEntries([]); };
+  useEffect(() => { if (location.pathname.endsWith('/new')) startAdd(); }, [location.pathname]);
   const closeEdit = () => {
     imageEntries.forEach(image => { if (image.file) URL.revokeObjectURL(image.src); });
     setEditing(null); setImageEntries([]); setError('');
@@ -114,36 +116,52 @@ export default function AdminProducts() {
     } finally { setUploading(false); }
   };
 
-  const save = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); if (!editing) return; setError('');
-    if (!editing.name.trim() || !editing.description.trim() || !editing.category) { setError('Name, description and category are required.'); return; }
+  const save = async (event?: FormEvent<HTMLFormElement>, publishMode?: boolean) => {
+    if (event) event.preventDefault();
+    if (!editing) return;
+    setError('');
+    const shouldPublish = publishMode !== undefined ? publishMode : Boolean(editing.active && editing.inventoryVerified);
+    if (!editing.name.trim()) { setError('Product name is required.'); return; }
+    if (!editing.description.trim()) { setError('Product description is required.'); return; }
+    if (!editing.category) { setError('Please select a product category.'); return; }
     if (!editing.variants.length) { setError('Add at least one product variant.'); return; }
     for (let i = 0; i < editing.variants.length; i++) {
       const v = editing.variants[i];
-      if (!v.size?.trim()) { setError(`Variant #${i + 1}: size is required.`); return; }
+      if (!v.size?.trim()) { setError(`Variant #${i + 1}: size is required (e.g. A4, A3).`); return; }
       if (!v.price || v.price <= 0) { setError(`Variant #${i + 1}: valid selling price greater than ₹0 is required.`); return; }
       if (v.originalPrice !== undefined && v.originalPrice !== null && v.originalPrice < v.price) {
         setError(`Variant #${i + 1}: original price (MRP ₹${v.originalPrice}) cannot be lower than selling price (₹${v.price}).`); return;
       }
       if (v.stock === undefined || v.stock === null || v.stock < 0 || !Number.isInteger(v.stock)) {
-        setError(`Variant #${i + 1}: stock must be a non-negative whole number.`); return;
+        setError(`Variant #${i + 1}: stock must be a non-negative whole number (0 or higher).`); return;
       }
     }
     const enteredSkus = [editing.sku, ...editing.variants.map(v => v.sku)].filter(Boolean).map(s => String(s).trim().toLowerCase());
     if (new Set(enteredSkus).size !== enteredSkus.length) {
       setError('Product SKU and variant SKUs must be unique.'); return;
     }
-    if (editing.inventoryVerified && (!imageEntries.length || !imageEntries.some(image => image.src))) { setError('Add genuine product photos before verifying inventory for publication.'); return; }
-    if (editing.inventoryVerified && !editing.variants.some(variant => variant.active !== false && variant.stock > 0)) { setError('At least one active variant needs verified price and available stock before publication.'); return; }
+    if (shouldPublish && !editing.variants.some(variant => variant.active !== false && variant.stock > 0)) {
+      setError('To publish to the customer storefront, at least one active variant needs available stock > 0.'); return;
+    }
     setSaving(true);
     try {
       const images = await uploadSelectedFiles(imageEntries);
-      const body = { ...editing, images, variants: editing.variants };
+      const body = {
+        ...editing,
+        images,
+        variants: editing.variants,
+        active: shouldPublish ? true : editing.active,
+        inventoryVerified: shouldPublish
+      };
       await request(editing._id ? `/admin/products/${editing._id}` : '/admin/products', { method: editing._id ? 'PUT' : 'POST', body: JSON.stringify(body) });
-      const published = Boolean(editing.active && editing.inventoryVerified);
-      closeEdit(); setSuccess(published ? 'Product saved and published to the customer storefront.' : 'Product saved as a draft. Verify its real photo, price and available stock before publishing.'); await load();
-    } catch (err) { setError(err instanceof Error ? err.message : 'Product could not be saved.'); }
-    finally { setSaving(false); }
+      closeEdit();
+      setSuccess(shouldPublish ? 'Product saved and published to the customer storefront!' : 'Product saved as a draft.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Product could not be saved.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const archive = async (product: Product) => {
@@ -159,6 +177,12 @@ export default function AdminProducts() {
     <div className="sectionHead"><div><div className="eyebrow">CATALOGUE</div><h1>Products & prices</h1><p>{total} product records · unverified items stay out of the customer storefront.</p></div><Link to="/admin" className="textLink">Dashboard</Link></div>
     <div className="adminActions"><Link className="btn btn-outline" to="/admin/categories">Categories</Link><Link className="btn btn-outline" to="/admin/reviews">Reviews</Link><Link className="btn btn-outline" to="/admin/settings">Settings</Link><Link className="btn btn-dark" to="/admin/pos">+ Offline sale</Link><button className="btn btn-dark" onClick={startAdd}>+ Add product</button></div>
     <div className="notice">Product photos upload to secure local storage by default; configured Cloudinary credentials are reused when present. Use actual shop photos, prices and stock. Images can be reordered below; the first image is primary.</div>
+    {!localStorage.getItem('pjpw_token') && (
+      <div className="notice" style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', fontWeight: 600, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>⚠️ You are not signed in as an administrator. Please sign in to create or edit products.</span>
+        <Link to="/admin/login" className="btn btn-dark" style={{ fontSize: '13px', padding: '6px 14px' }}>Sign in as Admin</Link>
+      </div>
+    )}
     {success && <div role="status" className="notice">{success}</div>}
     {error && !editing && <div role="alert" className="notice">{error}</div>}
     <div className="orderFilters productFilters"><label>Search products<input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Name, category or SKU"/></label><label>Category<select value={category} onChange={event => { setCategory(event.target.value); setPage(1); }}><option value="">All categories</option>{categoryOptions.map(option => <option key={option._id} value={option.name}>{option.name}</option>)}</select></label><label>Status<select value={activeFilter} onChange={event => { setActiveFilter(event.target.value); setPage(1); }}><option value="">All statuses</option><option value="true">Active</option><option value="false">Inactive / archived</option></select></label><label>Storefront<select value={visibilityFilter} onChange={event => { setVisibilityFilter(event.target.value); setPage(1); }}><option value="">Published and drafts</option><option value="true">Published</option><option value="false">Draft / hidden</option></select></label></div>
@@ -172,10 +196,10 @@ export default function AdminProducts() {
     {details && <div className="scrim" onMouseDown={event => { if (event.target === event.currentTarget) setDetails(null); }}><section className="adminEditor"><div className="drawerHead"><h2>{details.name}</h2><button className="iconBtn" onClick={() => setDetails(null)} aria-label="Close details">×</button></div><p>{details.description}</p><p><b>Category:</b> {details.category} · <b>SKU:</b> {details.sku || 'Not set'}</p><p><b>Storefront:</b> {details.active && details.inventoryVerified ? 'Published' : details.active ? 'Active, awaiting genuine inventory verification' : 'Archived'}</p><div className="adminImageGrid">{details.images.map((src, index) => <div key={`${src}-${index}`}><ProductImage src={src} alt={`${details.name} image ${index + 1}`}/><small>{index === 0 ? 'Primary image' : `Image ${index + 1}`}</small></div>)}</div><h3>Variants</h3>{details.variants.map((variant,index)=><p key={variant._id || index}>{variant.size} · {variant.paperQuality} · {variant.finish}{variant.frame ? ` · ${variant.frame}` : ''} · {money(variant.price)}{variant.originalPrice ? ` (MRP ${money(variant.originalPrice)})` : ''} · stock {variant.stock} · {variant.sku || 'No SKU'}</p>)}{details.seoTitle && <p><b>SEO title:</b> {details.seoTitle}</p>}{details.seoDescription && <p><b>SEO description:</b> {details.seoDescription}</p>}</section></div>}
 
     {editing && <div className="scrim" onMouseDown={event => { if (event.target === event.currentTarget) closeEdit(); }}><section className="adminEditor adminProductEditor"><div className="drawerHead"><div><div className="eyebrow">{editing._id ? 'EDIT PRODUCT' : 'NEW PRODUCT'}</div><h2>{editing._id ? editing.name : 'Add product'}</h2></div><button className="iconBtn" onClick={closeEdit} aria-label="Close product form">×</button></div>
-      <form onSubmit={save}>
-        {error && <div role="alert" className="notice">{error}</div>}
-        <label>Product name<input value={editing.name} onChange={event => changeField('name', event.target.value)} minLength={2} maxLength={180} required/></label>
-        <label>Product description<textarea value={editing.description} onChange={event => changeField('description', event.target.value)} minLength={5} maxLength={5000} rows={4} required/></label>
+      <form onSubmit={save} noValidate>
+        {error && <div role="alert" className="notice errorNotice" style={{ color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', padding: '10px 14px', borderRadius: '6px', fontWeight: 600 }}>⚠️ {error}</div>}
+        <label>Product name<input value={editing.name} onChange={event => changeField('name', event.target.value)} maxLength={180} required/></label>
+        <label>Product description<textarea value={editing.description} onChange={event => changeField('description', event.target.value)} maxLength={5000} rows={4} required/></label>
         <div className="adminFormGrid"><label>Category<select value={editing.category} onChange={event => changeField('category', event.target.value)} required><option value="">Choose category</option>{categoryOptions.map(option => <option key={option._id} value={option.name}>{option.name}</option>)}</select></label><label>Product SKU<input value={editing.sku || ''} onChange={event => changeField('sku', event.target.value)} maxLength={80}/></label></div>
         <label>Product images <small>JPG/JPEG, PNG or WebP · max 8 MB per image. Reorder images to select the primary image.</small></label>
         <div className="adminImageGrid">{imageEntries.map((image, index) => <div className="adminImageItem" key={image.id}><ProductImage src={image.src} alt={`${editing.name || 'Product'} image ${index + 1}`} loading="eager"/><strong>{index === 0 ? 'Primary image' : `Image ${index + 1}`}</strong><div><button type="button" className="filter" onClick={() => moveImage(index, -1)} disabled={index === 0}>←</button><button type="button" className="filter" onClick={() => moveImage(index, 1)} disabled={index === imageEntries.length - 1}>→</button><label className="replaceImage filter">Replace<input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => addFiles(event.currentTarget.files, image.id)}/></label><button type="button" className="filter" onClick={() => removeImage(image.id)}>Remove</button></div></div>)}</div>
@@ -187,9 +211,26 @@ export default function AdminProducts() {
         <label className="checkLabel"><input type="checkbox" checked={editing.featured} onChange={event => changeField('featured', event.target.checked)}/> Featured product</label>
         <label className="checkLabel"><input type="checkbox" checked={editing.active} onChange={event => changeField('active', event.target.checked)}/> Active status (keep unchecked to archive)</label>
         <label className="checkLabel"><input type="checkbox" checked={Boolean(editing.inventoryVerified)} onChange={event => { const verified = event.target.checked; setEditing(current => current ? { ...current, inventoryVerified: verified, ...(verified ? { active: true } : {}) } : current); }}/> Publish to customer storefront</label>
-        {!editing.inventoryVerified && <small className="muted">New products are drafts and stay hidden from customers. To publish, add at least one real product photo, enter correct prices and available stock, then check “Publish to customer storefront”.</small>}
-        {editing.inventoryVerified && <small className="muted">Publishing requires a real product photo and at least one active variant with stock. The server validates these before saving.</small>}
-        <button className="btn btn-dark full" disabled={saving || uploading}>{saving || uploading ? 'Saving product…' : editing._id ? 'Save product changes' : 'Create product'}</button>
+        {!editing.inventoryVerified && <small className="muted">Tip: Products saved as draft stay hidden from customers. To display on the storefront, click "Save & Publish".</small>}
+        {editing.inventoryVerified && <small className="muted">This product will be published live to the customer storefront.</small>}
+        {error && <div role="alert" className="notice errorNotice" style={{ color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: '6px', fontWeight: 600, marginTop: '12px' }}>
+          <div>⚠️ {error}</div>
+          {error.toLowerCase().includes('sign in') && (
+            <div style={{ marginTop: '10px' }}>
+              <Link to="/admin/login" className="btn btn-dark" style={{ display: 'inline-block', fontSize: '13px', padding: '6px 14px' }}>
+                👉 Click here to Sign In as Admin
+              </Link>
+            </div>
+          )}
+        </div>}
+        <div className="adminActions" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '16px' }}>
+          <button type="button" className="btn btn-outline" disabled={saving || uploading} onClick={() => void save(undefined, false)}>
+            {saving ? 'Saving…' : 'Save as Draft'}
+          </button>
+          <button type="button" className="btn btn-dark" disabled={saving || uploading} onClick={() => void save(undefined, true)}>
+            {saving || uploading ? 'Saving…' : editing._id ? 'Save & Publish to Storefront' : 'Create & Publish to Storefront'}
+          </button>
+        </div>
       </form>
     </section></div>}
   </main>;

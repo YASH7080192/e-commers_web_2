@@ -1,0 +1,11 @@
+﻿const fs = require('node:fs');
+const file = 'src/App.tsx';
+let source = fs.readFileSync(file, 'utf8');
+source = source.replace("import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';", "import { Link, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';");
+source = source.replace('  const navigate=useNavigate();', "  const navigate=useNavigate();\n  const isAdminRoute=useLocation().pathname.startsWith('/admin');");
+source = source.replace('  return <><SeoMetadata products={products}/>', '  return <>{!isAdminRoute&&<><SeoMetadata products={products}/>');
+source = source.replace('</header>\r\n  <Suspense', '</header></>}\r\n  <Suspense');
+source = source.replace('{cartOpen&&<div className="scrim"', '{!isAdminRoute&&cartOpen&&<div className="scrim"');
+if (!source.includes("const isAdminRoute=useLocation().pathname.startsWith('/admin')")) throw new Error('route condition was not inserted');
+if (!source.includes('</header></>}\r\n  <Suspense')) throw new Error('store header boundary was not inserted');
+fs.writeFileSync(file, source, 'utf8');
